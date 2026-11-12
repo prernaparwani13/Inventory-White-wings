@@ -1,39 +1,37 @@
-import mongoose from 'mongoose';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-let mongod = null;
+let prismaInstance;
+if (!global.__prisma) {
+  global.__prisma = new PrismaClient();
+}
+prismaInstance = global.__prisma;
+
+export const prisma = prismaInstance;
 
 export const connectDB = async () => {
   try {
-    let mongoUri = process.env.MONGODB_URI;
-
-    if (!mongoUri) {
-      console.log('No MONGODB_URI found in environment variables. Starting in-memory MongoDB server...');
-      mongod = await MongoMemoryServer.create();
-      mongoUri = mongod.getUri();
-      console.log(`In-memory MongoDB started at: ${mongoUri}`);
+    if (!process.env.DATABASE_URL) {
+      console.error('DATABASE_URL environment variable is missing from configuration.');
+      process.exit(1);
     }
 
-    const conn = await mongoose.connect(mongoUri);
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
-    return conn;
+    await prisma.$connect();
+    console.log('Database connected successfully via Prisma.');
   } catch (error) {
-    console.error(`Database connection error: ${error.message}`);
-    process.exit(1);
+    console.error(`Database connection notice/error: ${error.message}`);
   }
 };
 
 export const disconnectDB = async () => {
   try {
-    await mongoose.disconnect();
-    if (mongod) {
-      await mongod.stop();
-      console.log('In-memory MongoDB stopped.');
-    }
+    await prisma.$disconnect();
+    console.log('Database disconnected.');
   } catch (error) {
     console.error(`Database disconnection error: ${error.message}`);
   }
 };
+
+export default prisma;

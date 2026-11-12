@@ -1,4 +1,5 @@
-import User from '../models/User.js';
+import prisma from '../config/db.js';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { logActivity } from '../utils/auditLogger.js';
 
@@ -17,26 +18,33 @@ export const registerUser = async (req, res) => {
   const { name, email, password, role } = req.body;
 
   try {
-    const userExists = await User.findOne({ email });
+    const userExists = await prisma.user.findUnique({
+      where: { email: email.toLowerCase().trim() },
+    });
 
     if (userExists) {
       return res.status(400).json({ success: false, message: 'User already exists' });
     }
 
     // Check if it's the first user, default to Admin
-    const isFirstUser = (await User.countDocuments({})) === 0;
-    const assignedRole = isFirstUser ? 'Admin' : (role || 'Staff');
+    const userCount = await prisma.user.count();
+    const assignedRole = userCount === 0 ? 'Admin' : (role || 'Staff');
 
-    const user = await User.create({
-      name,
-      email,
-      password,
-      role: assignedRole,
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const user = await prisma.user.create({
+      data: {
+        name: name.trim(),
+        email: email.toLowerCase().trim(),
+        password: hashedPassword,
+        role: assignedRole,
+      },
     });
 
     if (user) {
       await logActivity({
-        userId: user._id,
+        userId: user.id,
         userName: user.name,
         action: 'USER_REGISTER',
         details: `Registered user: ${user.email} with role ${user.role}`,
@@ -46,11 +54,12 @@ export const registerUser = async (req, res) => {
       res.status(201).json({
         success: true,
         data: {
-          _id: user._id,
+          _id: user.id,
+          id: user.id,
           name: user.name,
           email: user.email,
           role: user.role,
-          token: generateToken(user._id),
+          token: generateToken(user.id),
         },
       });
     } else {
@@ -68,11 +77,15 @@ export const loginUser = async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase().trim() },
+    });
 
-    if (user && (await user.comparePassword(password))) {
+    const isMatch = user ? await bcrypt.compare(password, user.password) : false;
+
+    if (user && isMatch) {
       await logActivity({
-        userId: user._id,
+        userId: user.id,
         userName: user.name,
         action: 'USER_LOGIN',
         details: `User logged in: ${user.email}`,
@@ -82,11 +95,12 @@ export const loginUser = async (req, res) => {
       res.json({
         success: true,
         data: {
-          _id: user._id,
+          _id: user.id,
+          id: user.id,
           name: user.name,
           email: user.email,
           role: user.role,
-          token: generateToken(user._id),
+          token: generateToken(user.id),
         },
       });
     } else {
@@ -102,9 +116,27 @@ export const loginUser = async (req, res) => {
 // @access  Private
 export const getUserProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('-password');
+    const userId = req.user.id || req.user._id;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
     if (user) {
-      res.json({ success: true, data: user });
+      res.json({
+        success: true,
+        data: {
+          ...user,
+          _id: user.id,
+        },
+      });
     } else {
       res.status(404).json({ success: false, message: 'User not found' });
     }
@@ -118,8 +150,24 @@ export const getUserProfile = async (req, res) => {
 // @access  Private/Admin
 export const getUsers = async (req, res) => {
   try {
-    const users = await User.find({}).select('-password');
-    res.json({ success: true, data: users });
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const formattedUsers = users.map(u => ({
+      ...u,
+      _id: u.id,
+    }));
+
+    res.json({ success: true, data: formattedUsers });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

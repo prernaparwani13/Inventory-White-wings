@@ -1,92 +1,98 @@
-import Product from '../models/Product.js';
-import Inventory from '../models/Inventory.js';
-import Order from '../models/Order.js';
-import Return from '../models/Return.js';
-import Transaction from '../models/Transaction.js';
-import AuditLog from '../models/AuditLog.js';
+import prisma from '../config/db.js';
 
 // @desc    Get dashboard summary statistics
 // @route   GET /api/reports/dashboard
 // @access  Private
 export const getDashboardSummary = async (req, res) => {
   try {
-    const totalProducts = await Product.countDocuments({});
-    
-    // Aggregation for stock details
-    const stockStats = await Inventory.aggregate([
-      {
-        $group: {
-          _id: null,
-          totalQty: { $sum: '$quantity' },
-        },
-      },
-    ]);
-    const totalQty = stockStats.length > 0 ? stockStats[0].totalQty : 0;
+    const totalProducts = await prisma.product.count();
 
-    // Aggregation for total stock valuation
-    const inventoryValuationStats = await Inventory.aggregate([
-      {
-        $lookup: {
-          from: 'products',
-          localField: 'product',
-          foreignField: '_id',
-          as: 'prod',
+    // Sum of all stock items quantity
+    const stockStats = await prisma.inventory.aggregate({
+      _sum: { quantity: true },
+    });
+    const totalQty = stockStats._sum.quantity || 0;
+
+    // Total stock valuation calculation
+    const allInventory = await prisma.inventory.findMany({
+      include: {
+        product: {
+          select: { price: true },
         },
       },
-      { $unwind: '$prod' },
-      {
-        $group: {
-          _id: null,
-          totalValue: { $sum: { $multiply: ['$quantity', '$prod.price'] } },
-        },
-      },
-    ]);
-    const totalValue = inventoryValuationStats.length > 0 ? inventoryValuationStats[0].totalValue : 0;
+    });
+
+    const totalValue = allInventory.reduce((acc, inv) => {
+      const price = inv.product ? inv.product.price : 0;
+      return acc + inv.quantity * price;
+    }, 0);
 
     // Count low stock products
-    const lowStockCount = await Inventory.countDocuments({
-      status: { $in: ['Low Stock', 'Out of Stock'] },
+    const lowStockCount = await prisma.inventory.count({
+      where: {
+        status: { in: ['Low Stock', 'Out of Stock'] },
+      },
     });
 
     // Delivered orders count and total revenue
-    const ordersStats = await Order.aggregate([
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 },
-          revenue: { $sum: '$totalAmount' },
-        },
-      },
-    ]);
+    const deliveredOrdersCount = await prisma.order.count({
+      where: { status: 'Delivered' },
+    });
 
-    const deliveredOrdersCount = ordersStats.find(o => o._id === 'Delivered')?.count || 0;
-    const totalRevenue = ordersStats.reduce((sum, o) => o._id !== 'Cancelled' ? sum + o.revenue : sum, 0);
+    const revenueStats = await prisma.order.aggregate({
+      _sum: { totalAmount: true },
+      where: {
+        status: { not: 'Cancelled' },
+      },
+    });
+    const totalRevenue = revenueStats._sum.totalAmount || 0;
 
     // Total returns
-    const totalReturnsCount = await Return.countDocuments({});
-    const approvedReturnsCount = await Return.countDocuments({ status: 'Approved & Restocked' });
+    const totalReturnsCount = await prisma.return.count();
+    const approvedReturnsCount = await prisma.return.count({
+      where: { status: 'Approved & Restocked' },
+    });
 
-    // Recent activity log (latest 5 logs)
-    const recentLogs = await AuditLog.find({})
-      .sort({ createdAt: -1 })
-      .limit(6);
+    // Recent activity log (latest 6 logs)
+    const recentLogsRaw = await prisma.auditLog.findMany({
+      take: 6,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: {
+          select: { id: true, name: true, email: true, role: true },
+        },
+      },
+    });
+
+    const recentLogs = recentLogsRaw.map(log => ({
+      _id: log.id,
+      id: log.id,
+      userName: log.userName,
+      action: log.action,
+      details: log.details,
+      ipAddress: log.ipAddress,
+      createdAt: log.createdAt,
+      user: log.user ? {
+        _id: log.user.id,
+        id: log.user.id,
+        name: log.user.name,
+        email: log.user.email,
+        role: log.user.role,
+      } : null,
+    }));
 
     // Category distribution
-    const categoryDistribution = await Product.aggregate([
-      {
-        $group: {
-          _id: '$category',
-          count: { $sum: 1 },
-        },
+    const categoryGroup = await prisma.product.groupBy({
+      by: ['category'],
+      _count: {
+        id: true,
       },
-      {
-        $project: {
-          category: '$_id',
-          count: 1,
-          _id: 0,
-        },
-      },
-    ]);
+    });
+
+    const categoryDistribution = categoryGroup.map(c => ({
+      category: c.category,
+      count: c._count.id,
+    }));
 
     res.json({
       success: true,
@@ -117,16 +123,38 @@ export const getSystemAuditLogs = async (req, res) => {
   const skip = (page - 1) * limit;
 
   try {
-    const total = await AuditLog.countDocuments({});
-    const logs = await AuditLog.find({})
-      .populate('user', 'name email role')
-      .skip(skip)
-      .limit(limit)
-      .sort({ createdAt: -1 });
+    const total = await prisma.auditLog.count();
+    const logs = await prisma.auditLog.findMany({
+      skip,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: {
+          select: { id: true, name: true, email: true, role: true },
+        },
+      },
+    });
+
+    const formattedLogs = logs.map(log => ({
+      _id: log.id,
+      id: log.id,
+      userName: log.userName,
+      action: log.action,
+      details: log.details,
+      ipAddress: log.ipAddress,
+      createdAt: log.createdAt,
+      user: log.user ? {
+        _id: log.user.id,
+        id: log.user.id,
+        name: log.user.name,
+        email: log.user.email,
+        role: log.user.role,
+      } : null,
+    }));
 
     res.json({
       success: true,
-      data: logs,
+      data: formattedLogs,
       pagination: {
         total,
         page,

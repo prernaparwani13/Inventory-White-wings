@@ -1,0 +1,153 @@
+// Prisma schema for Neon PostgreSQL database
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String        @id @default(uuid())
+  name         String
+  email        String        @unique
+  password     String
+  role         String        @default("Staff")
+  products     Product[]     @relation("CreatedProducts")
+  orders       Order[]       @relation("CreatedOrders")
+  returns      Return[]      @relation("ProcessedReturns")
+  audits       Audit[]       @relation("AuditedBy")
+  transactions Transaction[] @relation("PerformedTransactions")
+  auditLogs    AuditLog[]    @relation("UserAuditLogs")
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model Product {
+  id            String        @id @default(uuid())
+  name          String
+  sku           String        @unique
+  description   String?
+  category      String
+  price         Float
+  supplier      String?
+  dimensions    String?
+  weight        Float?
+  createdBy     String
+  createdByUser User          @relation("CreatedProducts", fields: [createdBy], references: [id])
+  inventory     Inventory?
+  orderItems    OrderItem[]
+  returns       Return[]
+  auditItems    AuditItem[]
+  transactions  Transaction[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+}
+
+model Inventory {
+  id           String   @id @default(uuid())
+  productId    String   @unique
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity     Int      @default(0)
+  location     String   @default("Receiving Dock")
+  reorderPoint Int      @default(10)
+  status       String   @default("Out of Stock")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Order {
+  id              String      @id @default(uuid())
+  orderNumber     String      @unique
+  customerName    String
+  shippingAddress String
+  items           OrderItem[]
+  totalAmount     Float
+  status          String      @default("Pending")
+  trackingNumber  String?
+  shippedAt       DateTime?
+  deliveredAt     DateTime?
+  createdBy       String
+  createdByUser   User        @relation("CreatedOrders", fields: [createdBy], references: [id])
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+  price     Float
+}
+
+model Return {
+  id              String   @id @default(uuid())
+  returnNumber    String   @unique
+  orderNumber     String
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id])
+  quantity        Int
+  reason          String
+  status          String   @default("Pending Approval")
+  actionTaken     String?
+  processedBy     String?
+  processedByUser User?    @relation("ProcessedReturns", fields: [processedBy], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Audit {
+  id            String      @id @default(uuid())
+  auditNumber   String      @unique
+  items         AuditItem[]
+  status        String      @default("Draft")
+  auditedBy     String
+  auditedByUser User       @relation("AuditedBy", fields: [auditedBy], references: [id])
+  reconciledAt  DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model AuditItem {
+  id          String  @id @default(uuid())
+  auditId     String
+  audit       Audit   @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product @relation(fields: [productId], references: [id])
+  expectedQty Int
+  actualQty   Int
+  discrepancy Int     @default(0)
+  remarks     String?
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation("UserAuditLogs", fields: [userId], references: [id])
+  userName  String?
+  action    String
+  details   String
+  ipAddress String?
+  createdAt DateTime @default(now())
+}
+
+model Transaction {
+  id              String   @id @default(uuid())
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id])
+  type            String
+  quantity        Int
+  previousQty     Int
+  newQty          Int
+  reason          String
+  referenceId     String?
+  performedBy     String
+  performedByUser User     @relation("PerformedTransactions", fields: [performedBy], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

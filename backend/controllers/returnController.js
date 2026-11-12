@@ -1,8 +1,11 @@
-import Return from '../models/Return.js';
-import Inventory from '../models/Inventory.js';
-import Product from '../models/Product.js';
-import Transaction from '../models/Transaction.js';
+import prisma from '../config/db.js';
 import { logActivity } from '../utils/auditLogger.js';
+
+const calculateStatus = (quantity, reorderPoint) => {
+  if (quantity <= 0) return 'Out of Stock';
+  if (quantity <= reorderPoint) return 'Low Stock';
+  return 'In Stock';
+};
 
 // @desc    Initiate a product return
 // @route   POST /api/returns
@@ -15,7 +18,7 @@ export const createReturn = async (req, res) => {
   }
 
   try {
-    const product = await Product.findById(productId);
+    const product = await prisma.product.findUnique({ where: { id: productId } });
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
@@ -23,26 +26,34 @@ export const createReturn = async (req, res) => {
     const randCode = Math.floor(10000 + Math.random() * 90000);
     const returnNumber = `RET-${randCode}`;
 
-    const returnedItem = new Return({
-      returnNumber,
-      orderNumber,
-      product: productId,
-      quantity,
-      reason,
-      status: 'Pending Approval',
+    const savedReturn = await prisma.return.create({
+      data: {
+        returnNumber,
+        orderNumber,
+        productId,
+        quantity: parseInt(quantity),
+        reason,
+        status: 'Pending Approval',
+      },
     });
 
-    const savedReturn = await returnedItem.save();
+    const userId = req.user.id || req.user._id;
 
     await logActivity({
-      userId: req.user._id,
+      userId,
       userName: req.user.name,
       action: 'RETURN_INITIATE',
       details: `Initiated return ${returnNumber} for order ${orderNumber}. Product: ${product.name}, Qty: ${quantity}`,
       ip: req.ip,
     });
 
-    res.status(201).json({ success: true, data: savedReturn });
+    res.status(201).json({
+      success: true,
+      data: {
+        ...savedReturn,
+        _id: savedReturn.id,
+      },
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -57,32 +68,68 @@ export const getReturns = async (req, res) => {
   const skip = (page - 1) * limit;
 
   const { search, status } = req.query;
-  let query = {};
-
-  if (status) {
-    query.status = status;
-  }
-
-  if (search) {
-    query.$or = [
-      { returnNumber: { $regex: search, $options: 'i' } },
-      { orderNumber: { $regex: search, $options: 'i' } },
-      { reason: { $regex: search, $options: 'i' } },
-    ];
-  }
 
   try {
-    const total = await Return.countDocuments(query);
-    const returnsList = await Return.find(query)
-      .populate('product', 'name sku category price')
-      .populate('processedBy', 'name email')
-      .skip(skip)
-      .limit(limit)
-      .sort({ createdAt: -1 });
+    const where = {};
+
+    if (status) {
+      where.status = status;
+    }
+
+    if (search) {
+      where.OR = [
+        { returnNumber: { contains: search, mode: 'insensitive' } },
+        { orderNumber: { contains: search, mode: 'insensitive' } },
+        { reason: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const total = await prisma.return.count({ where });
+    const returnsList = await prisma.return.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        product: {
+          select: { id: true, name: true, sku: true, category: true, price: true },
+        },
+        processedByUser: {
+          select: { id: true, name: true, email: true },
+        },
+      },
+    });
+
+    const formattedReturns = returnsList.map(ret => ({
+      _id: ret.id,
+      id: ret.id,
+      returnNumber: ret.returnNumber,
+      orderNumber: ret.orderNumber,
+      quantity: ret.quantity,
+      reason: ret.reason,
+      status: ret.status,
+      actionTaken: ret.actionTaken,
+      createdAt: ret.createdAt,
+      updatedAt: ret.updatedAt,
+      product: ret.product ? {
+        _id: ret.product.id,
+        id: ret.product.id,
+        name: ret.product.name,
+        sku: ret.product.sku,
+        category: ret.product.category,
+        price: ret.product.price,
+      } : null,
+      processedBy: ret.processedByUser ? {
+        _id: ret.processedByUser.id,
+        id: ret.processedByUser.id,
+        name: ret.processedByUser.name,
+        email: ret.processedByUser.email,
+      } : null,
+    }));
 
     res.json({
       success: true,
-      data: returnsList,
+      data: formattedReturns,
       pagination: {
         total,
         page,
@@ -106,7 +153,7 @@ export const processReturn = async (req, res) => {
   }
 
   try {
-    const returnItem = await Return.findById(req.params.id);
+    const returnItem = await prisma.return.findUnique({ where: { id: req.params.id } });
     if (!returnItem) {
       return res.status(404).json({ success: false, message: 'Return request not found' });
     }
@@ -115,45 +162,63 @@ export const processReturn = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Return request is already processed' });
     }
 
-    returnItem.status = status;
-    returnItem.actionTaken = actionTaken || `Processed return as ${status}`;
-    returnItem.processedBy = req.user._id;
+    const userId = req.user.id || req.user._id;
 
-    const savedReturn = await returnItem.save();
+    const savedReturn = await prisma.return.update({
+      where: { id: req.params.id },
+      data: {
+        status,
+        actionTaken: actionTaken || `Processed return as ${status}`,
+        processedBy: userId,
+      },
+    });
 
     // If approved and restocked, add quantities back to inventory
     if (status === 'Approved & Restocked') {
-      const inventory = await Inventory.findOne({ product: returnItem.product });
+      const inventory = await prisma.inventory.findUnique({ where: { productId: returnItem.productId } });
       if (inventory) {
         const previousQty = inventory.quantity;
-        inventory.quantity = previousQty + returnItem.quantity;
-        await inventory.save();
+        const newQty = previousQty + returnItem.quantity;
+        const newStatus = calculateStatus(newQty, inventory.reorderPoint);
 
-        // Log stock transaction
-        const transaction = new Transaction({
-          product: returnItem.product,
-          type: 'Return',
-          quantity: returnItem.quantity,
-          previousQty,
-          newQty: previousQty + returnItem.quantity,
-          reason: `Restocked returned items from return ${returnItem.returnNumber}`,
-          referenceId: returnItem._id.toString(),
-          performedBy: req.user._id,
+        await prisma.inventory.update({
+          where: { productId: returnItem.productId },
+          data: {
+            quantity: newQty,
+            status: newStatus,
+          },
         });
-        await transaction.save();
+
+        await prisma.transaction.create({
+          data: {
+            productId: returnItem.productId,
+            type: 'Return',
+            quantity: returnItem.quantity,
+            previousQty,
+            newQty,
+            reason: `Restocked returned items from return ${returnItem.returnNumber}`,
+            referenceId: returnItem.id,
+            performedBy: userId,
+          },
+        });
       }
     }
 
-    // Log system activity
     await logActivity({
-      userId: req.user._id,
+      userId,
       userName: req.user.name,
       action: `RETURN_${status.toUpperCase().replace(/ & /g, '_').replace(/ /g, '_')}`,
-      details: `Processed return ${returnItem.returnNumber} as ${status}. Product ID: ${returnItem.product}`,
+      details: `Processed return ${returnItem.returnNumber} as ${status}. Product ID: ${returnItem.productId}`,
       ip: req.ip,
     });
 
-    res.json({ success: true, data: savedReturn });
+    res.json({
+      success: true,
+      data: {
+        ...savedReturn,
+        _id: savedReturn.id,
+      },
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

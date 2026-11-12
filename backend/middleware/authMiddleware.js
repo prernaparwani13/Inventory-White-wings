@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
+import prisma from '../config/db.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -14,10 +14,26 @@ export const protect = async (req, res, next) => {
       token = req.headers.authorization.split(' ')[1];
       const decoded = jwt.verify(token, JWT_SECRET);
 
-      req.user = await User.findById(decoded.id).select('-password');
-      if (!req.user) {
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.id },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      if (!user) {
         return res.status(401).json({ success: false, message: 'User not found' });
       }
+
+      req.user = {
+        ...user,
+        _id: user.id,
+      };
 
       next();
     } catch (error) {
@@ -42,3 +58,4 @@ export const authorize = (...roles) => {
     next();
   };
 };
+

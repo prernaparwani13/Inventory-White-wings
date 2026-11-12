@@ -1,16 +1,18 @@
-import AuditLog from '../models/AuditLog.js';
+import prisma from '../config/db.js';
 
 export const logActivity = async ({ userId, userName, action, details, ip }) => {
   try {
-    const log = new AuditLog({
-      user: userId,
-      userName,
-      action,
-      details,
-      ipAddress: ip || 'unknown',
+    await prisma.auditLog.create({
+      data: {
+        userId: userId ? userId.toString() : null,
+        userName,
+        action,
+        details,
+        ipAddress: ip || 'unknown',
+      },
     });
-    await log.save();
   } catch (error) {
     console.error(`Audit logging failed: ${error.message}`);
   }
 };
+

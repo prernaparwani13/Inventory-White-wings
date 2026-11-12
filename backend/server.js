@@ -17,7 +17,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Connect to Database (falls back to memory server if MONGODB_URI is empty)
+// Connect to Database
 connectDB();
 
 // Middlewares

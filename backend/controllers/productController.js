@@ -1,5 +1,4 @@
-import Product from '../models/Product.js';
-import Inventory from '../models/Inventory.js';
+import prisma from '../config/db.js';
 import { logActivity } from '../utils/auditLogger.js';
 
 // Helper to generate SKU
@@ -8,9 +7,9 @@ const createSkuCode = async (name, category) => {
   const cleanName = name.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
   const rand = Math.floor(1000 + Math.random() * 9000);
   const sku = `WW-${cleanCat}-${cleanName}-${rand}`;
-  
-  // Verify uniqueness
-  const exists = await Product.findOne({ sku });
+
+  // Verify uniqueness in Neon DB
+  const exists = await prisma.product.findUnique({ where: { sku } });
   if (exists) {
     return createSkuCode(name, category); // Try again
   }
@@ -45,44 +44,58 @@ export const createProduct = async (req, res) => {
       finalSku = await createSkuCode(name, category);
     } else {
       // Check if SKU exists
-      const skuExists = await Product.findOne({ sku: finalSku.toUpperCase() });
+      const skuExists = await prisma.product.findUnique({ where: { sku: finalSku.toUpperCase() } });
       if (skuExists) {
         return res.status(400).json({ success: false, message: 'Product SKU already exists' });
       }
     }
 
-    const product = new Product({
-      name,
-      sku: finalSku.toUpperCase(),
-      description,
-      category,
-      price,
-      supplier,
-      dimensions,
-      weight,
-      createdBy: req.user._id,
-    });
+    const userId = req.user.id || req.user._id;
 
-    const savedProduct = await product.save();
+    const savedProduct = await prisma.product.create({
+      data: {
+        name,
+        sku: finalSku.toUpperCase(),
+        description,
+        category,
+        price: parseFloat(price),
+        supplier,
+        dimensions,
+        weight: weight !== undefined && weight !== '' ? parseFloat(weight) : null,
+        createdBy: userId,
+      },
+    });
 
     // Automatically initialize inventory record
-    const inventory = new Inventory({
-      product: savedProduct._id,
-      quantity: 0,
-      location: location || 'Receiving Dock',
-      reorderPoint: reorderPoint !== undefined ? reorderPoint : 10,
+    const inventory = await prisma.inventory.create({
+      data: {
+        productId: savedProduct.id,
+        quantity: 0,
+        location: location || 'Receiving Dock',
+        reorderPoint: reorderPoint !== undefined ? parseInt(reorderPoint) : 10,
+        status: 'Out of Stock',
+      },
     });
-    await inventory.save();
 
     await logActivity({
-      userId: req.user._id,
+      userId,
       userName: req.user.name,
       action: 'PRODUCT_CREATE',
       details: `Created product: ${savedProduct.name} (${savedProduct.sku}) and initialized inventory`,
       ip: req.ip,
     });
 
-    res.status(201).json({ success: true, data: savedProduct });
+    res.status(201).json({
+      success: true,
+      data: {
+        ...savedProduct,
+        _id: savedProduct.id,
+        inventory: {
+          ...inventory,
+          _id: inventory.id,
+        },
+      },
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -98,44 +111,70 @@ export const getProducts = async (req, res) => {
 
   const { search, category, status } = req.query;
 
-  let query = {};
-
-  if (category) {
-    query.category = category;
-  }
-
-  if (search) {
-    query.$or = [
-      { name: { $regex: search, $options: 'i' } },
-      { sku: { $regex: search, $options: 'i' } },
-      { supplier: { $regex: search, $options: 'i' } },
-    ];
-  }
-
   try {
-    // If status filter is active, we have to look up Inventory first since status is stored there
-    if (status) {
-      const matchingInventory = await Inventory.find({ status }).select('product');
-      const productIds = matchingInventory.map(item => item.product);
-      query._id = { $in: productIds };
+    const where = {};
+
+    if (category) {
+      where.category = category;
     }
 
-    const total = await Product.countDocuments(query);
-    const products = await Product.find(query)
-      .populate('createdBy', 'name email')
-      .skip(skip)
-      .limit(limit)
-      .sort({ createdAt: -1 });
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { sku: { contains: search, mode: 'insensitive' } },
+        { supplier: { contains: search, mode: 'insensitive' } },
+      ];
+    }
 
-    // Attach inventory details to products list
-    const productIds = products.map(p => p._id);
-    const inventories = await Inventory.find({ product: { $in: productIds } });
+    if (status) {
+      where.inventory = {
+        status: status,
+      };
+    }
+
+    const total = await prisma.product.count({ where });
+    const products = await prisma.product.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        createdByUser: {
+          select: { id: true, name: true, email: true },
+        },
+        inventory: true,
+      },
+    });
 
     const productsWithInventory = products.map(product => {
-      const inv = inventories.find(i => i.product.toString() === product._id.toString());
+      const inv = product.inventory;
       return {
-        ...product._doc,
-        inventory: inv || { quantity: 0, location: 'Unknown', status: 'Out of Stock', reorderPoint: 10 },
+        _id: product.id,
+        id: product.id,
+        name: product.name,
+        sku: product.sku,
+        description: product.description,
+        category: product.category,
+        price: product.price,
+        supplier: product.supplier,
+        dimensions: product.dimensions,
+        weight: product.weight,
+        createdBy: product.createdByUser ? {
+          _id: product.createdByUser.id,
+          id: product.createdByUser.id,
+          name: product.createdByUser.name,
+          email: product.createdByUser.email,
+        } : { _id: product.createdBy },
+        createdAt: product.createdAt,
+        updatedAt: product.updatedAt,
+        inventory: inv ? {
+          _id: inv.id,
+          id: inv.id,
+          quantity: inv.quantity,
+          location: inv.location,
+          status: inv.status,
+          reorderPoint: inv.reorderPoint,
+        } : { quantity: 0, location: 'Unknown', status: 'Out of Stock', reorderPoint: 10 },
       };
     });
 
@@ -159,18 +198,49 @@ export const getProducts = async (req, res) => {
 // @access  Private
 export const getProductById = async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id).populate('createdBy', 'name email');
+    const product = await prisma.product.findUnique({
+      where: { id: req.params.id },
+      include: {
+        createdByUser: { select: { id: true, name: true, email: true } },
+        inventory: true,
+      },
+    });
+
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    const inventory = await Inventory.findOne({ product: product._id });
+    const inv = product.inventory;
 
     res.json({
       success: true,
       data: {
-        ...product._doc,
-        inventory: inventory || { quantity: 0, location: 'Unknown', status: 'Out of Stock', reorderPoint: 10 },
+        _id: product.id,
+        id: product.id,
+        name: product.name,
+        sku: product.sku,
+        description: product.description,
+        category: product.category,
+        price: product.price,
+        supplier: product.supplier,
+        dimensions: product.dimensions,
+        weight: product.weight,
+        createdBy: product.createdByUser ? {
+          _id: product.createdByUser.id,
+          id: product.createdByUser.id,
+          name: product.createdByUser.name,
+          email: product.createdByUser.email,
+        } : { _id: product.createdBy },
+        createdAt: product.createdAt,
+        updatedAt: product.updatedAt,
+        inventory: inv ? {
+          _id: inv.id,
+          id: inv.id,
+          quantity: inv.quantity,
+          location: inv.location,
+          status: inv.status,
+          reorderPoint: inv.reorderPoint,
+        } : { quantity: 0, location: 'Unknown', status: 'Out of Stock', reorderPoint: 10 },
       },
     });
   } catch (error) {
@@ -185,37 +255,54 @@ export const updateProduct = async (req, res) => {
   const { name, category, price, supplier, dimensions, weight, location, reorderPoint } = req.body;
 
   try {
-    const product = await Product.findById(req.params.id);
-    if (!product) {
+    const productExists = await prisma.product.findUnique({ where: { id: req.params.id } });
+    if (!productExists) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    product.name = name || product.name;
-    product.category = category || product.category;
-    product.price = price !== undefined ? price : product.price;
-    product.supplier = supplier !== undefined ? supplier : product.supplier;
-    product.dimensions = dimensions !== undefined ? dimensions : product.dimensions;
-    product.weight = weight !== undefined ? weight : product.weight;
-
-    const updatedProduct = await product.save();
+    const updatedProduct = await prisma.product.update({
+      where: { id: req.params.id },
+      data: {
+        name: name || undefined,
+        category: category || undefined,
+        price: price !== undefined ? parseFloat(price) : undefined,
+        supplier: supplier !== undefined ? supplier : undefined,
+        dimensions: dimensions !== undefined ? dimensions : undefined,
+        weight: weight !== undefined ? (weight !== '' ? parseFloat(weight) : null) : undefined,
+      },
+    });
 
     // Also update inventory values if location or reorderPoint are changed
-    const inventory = await Inventory.findOne({ product: product._id });
-    if (inventory) {
-      if (location !== undefined) inventory.location = location;
-      if (reorderPoint !== undefined) inventory.reorderPoint = reorderPoint;
-      await inventory.save();
+    if (location !== undefined || reorderPoint !== undefined) {
+      const inventory = await prisma.inventory.findUnique({ where: { productId: req.params.id } });
+      if (inventory) {
+        await prisma.inventory.update({
+          where: { productId: req.params.id },
+          data: {
+            location: location !== undefined ? location : undefined,
+            reorderPoint: reorderPoint !== undefined ? parseInt(reorderPoint) : undefined,
+          },
+        });
+      }
     }
 
+    const userId = req.user.id || req.user._id;
+
     await logActivity({
-      userId: req.user._id,
+      userId,
       userName: req.user.name,
       action: 'PRODUCT_UPDATE',
       details: `Updated product: ${updatedProduct.name} (${updatedProduct.sku})`,
       ip: req.ip,
     });
 
-    res.json({ success: true, data: updatedProduct });
+    res.json({
+      success: true,
+      data: {
+        ...updatedProduct,
+        _id: updatedProduct.id,
+      },
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -226,16 +313,17 @@ export const updateProduct = async (req, res) => {
 // @access  Private/Admin & Warehouse Manager
 export const deleteProduct = async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await prisma.product.findUnique({ where: { id: req.params.id } });
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    await Product.findByIdAndDelete(req.params.id);
-    await Inventory.findOneAndDelete({ product: req.params.id });
+    await prisma.product.delete({ where: { id: req.params.id } });
+
+    const userId = req.user.id || req.user._id;
 
     await logActivity({
-      userId: req.user._id,
+      userId,
       userName: req.user.name,
       action: 'PRODUCT_DELETE',
       details: `Deleted product: ${product.name} (${product.sku}) and its inventory record`,
