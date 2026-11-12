@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Layout from '../../components/Layout';
+import Portal from '../../components/Portal';
 import { api } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 import styles from './products.module.css';
@@ -343,8 +344,14 @@ export default function ProductsPage() {
 
       {/* Create / Edit Modal */}
       {showModal && (
-        <div className={styles.modalOverlay}>
-          <div className={`${styles.modalContent} glass-panel`}>
+        <Portal>
+          <div
+            className={styles.modalOverlay}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowModal(false);
+            }}
+          >
+            <div className={`${styles.modalContent} glass-panel`}>
             <div className={styles.modalHeader}>
               <h3 className={styles.modalTitle}>
                 {editProduct ? 'Edit Product Details' : 'Register New Product'}
@@ -535,6 +542,7 @@ export default function ProductsPage() {
             </form>
           </div>
         </div>
+      </Portal>
       )}
     </Layout>
   );

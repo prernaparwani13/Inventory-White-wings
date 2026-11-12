@@ -78,9 +78,9 @@ export const getReturns = async (req, res) => {
 
     if (search) {
       where.OR = [
-        { returnNumber: { contains: search, mode: 'insensitive' } },
-        { orderNumber: { contains: search, mode: 'insensitive' } },
-        { reason: { contains: search, mode: 'insensitive' } },
+        { returnNumber: { contains: search } },
+        { orderNumber: { contains: search } },
+        { reason: { contains: search } },
       ];
     }
 

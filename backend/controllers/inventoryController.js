@@ -26,9 +26,9 @@ export const getInventory = async (req, res) => {
 
     if (search) {
       where.OR = [
-        { product: { name: { contains: search, mode: 'insensitive' } } },
-        { product: { sku: { contains: search, mode: 'insensitive' } } },
-        { location: { contains: search, mode: 'insensitive' } },
+        { product: { name: { contains: search } } },
+        { product: { sku: { contains: search } } },
+        { location: { contains: search } },
       ];
     }
 
@@ -254,8 +254,8 @@ export const getTransactionLogs = async (req, res) => {
 
     if (search) {
       where.OR = [
-        { product: { name: { contains: search, mode: 'insensitive' } } },
-        { product: { sku: { contains: search, mode: 'insensitive' } } },
+        { product: { name: { contains: search } } },
+        { product: { sku: { contains: search } } },
       ];
     }
 

@@ -168,8 +168,8 @@ export const getOrders = async (req, res) => {
 
     if (search) {
       where.OR = [
-        { orderNumber: { contains: search, mode: 'insensitive' } },
-        { customerName: { contains: search, mode: 'insensitive' } },
+        { orderNumber: { contains: search } },
+        { customerName: { contains: search } },
       ];
     }
 

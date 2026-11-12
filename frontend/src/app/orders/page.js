@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Layout from '../../components/Layout';
+import Portal from '../../components/Portal';
 import { api } from '../../utils/api';
 import styles from '../products/products.module.css'; // sharing layouts, tables, and modal styles
 import { SearchIcon, PlusIcon, XIcon, InfoIcon } from '../../components/Icons';
@@ -397,8 +398,14 @@ export default function OrdersPage() {
 
       {/* Create Sales Order Modal */}
       {showCreateModal && (
-        <div className={styles.modalOverlay}>
-          <div className={`${styles.modalContent} glass-panel`} style={{ maxWidth: '700px' }}>
+        <Portal>
+          <div
+            className={styles.modalOverlay}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowCreateModal(false);
+            }}
+          >
+            <div className={`${styles.modalContent} glass-panel`} style={{ maxWidth: '700px' }}>
             <div className={styles.modalHeader}>
               <h3 className={styles.modalTitle}>Create New Sales Order</h3>
               <button className={styles.closeBtn} onClick={() => setShowCreateModal(false)}>
@@ -529,12 +536,19 @@ export default function OrdersPage() {
             </form>
           </div>
         </div>
+      </Portal>
       )}
 
       {/* Order Action Modal */}
       {showStatusModal && selectedOrder && (
-        <div className={styles.modalOverlay}>
-          <div className={`${styles.modalContent} glass-panel`} style={{ maxWidth: '440px' }}>
+        <Portal>
+          <div
+            className={styles.modalOverlay}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowStatusModal(false);
+            }}
+          >
+            <div className={`${styles.modalContent} glass-panel`} style={{ maxWidth: '440px' }}>
             <div className={styles.modalHeader}>
               <h3 className={styles.modalTitle}>Order Actions: {selectedOrder.orderNumber}</h3>
               <button className={styles.closeBtn} onClick={() => setShowStatusModal(false)}>
@@ -615,6 +629,7 @@ export default function OrdersPage() {
             </div>
           </div>
         </div>
+      </Portal>
       )}
     </Layout>
   );

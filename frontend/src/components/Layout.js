@@ -35,7 +35,7 @@ export default function Layout({ children }) {
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className={styles.mainContent}>
         <Header onMenuToggle={() => setSidebarOpen(!sidebarOpen)} />
-        <main className={styles.pageBody + " animate-fade-in"}>
+        <main className={styles.pageBody}>
           {children}
         </main>
       </div>

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Layout from '../../components/Layout';
+import Portal from '../../components/Portal';
 import { api } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 import styles from '../products/products.module.css'; // sharing layouts, tables, and modal styles
@@ -313,8 +314,14 @@ export default function ReturnsPage() {
 
       {/* File Return Modal */}
       {showCreateModal && (
-        <div className={styles.modalOverlay}>
-          <div className={`${styles.modalContent} glass-panel`}>
+        <Portal>
+          <div
+            className={styles.modalOverlay}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowCreateModal(false);
+            }}
+          >
+            <div className={`${styles.modalContent} glass-panel`}>
             <div className={styles.modalHeader}>
               <h3 className={styles.modalTitle}>File Customer Product Return</h3>
               <button className={styles.closeBtn} onClick={() => setShowCreateModal(false)}>
@@ -407,12 +414,19 @@ export default function ReturnsPage() {
             </form>
           </div>
         </div>
+      </Portal>
       )}
 
       {/* Process Return Action Modal */}
       {showProcessModal && selectedReturn && (
-        <div className={styles.modalOverlay}>
-          <div className={`${styles.modalContent} glass-panel`} style={{ maxWidth: '440px' }}>
+        <Portal>
+          <div
+            className={styles.modalOverlay}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowProcessModal(false);
+            }}
+          >
+            <div className={`${styles.modalContent} glass-panel`} style={{ maxWidth: '440px' }}>
             <div className={styles.modalHeader}>
               <h3 className={styles.modalTitle}>Process Return: {selectedReturn.returnNumber}</h3>
               <button className={styles.closeBtn} onClick={() => setShowProcessModal(false)}>
@@ -467,6 +481,7 @@ export default function ReturnsPage() {
             </div>
           </div>
         </div>
+      </Portal>
       )}
     </Layout>
   );

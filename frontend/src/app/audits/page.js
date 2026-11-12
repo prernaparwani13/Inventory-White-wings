@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Layout from '../../components/Layout';
+import Portal from '../../components/Portal';
 import { api } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 import styles from '../products/products.module.css'; // sharing layouts, tables, and modal styles
@@ -250,8 +251,14 @@ export default function AuditsPage() {
 
       {/* Audit Detail & Entry Modal */}
       {showDetailModal && selectedAudit && (
-        <div className={styles.modalOverlay}>
-          <div className={`${styles.modalContent} glass-panel`} style={{ maxWidth: '800px' }}>
+        <Portal>
+          <div
+            className={styles.modalOverlay}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowDetailModal(false);
+            }}
+          >
+            <div className={`${styles.modalContent} glass-panel`} style={{ maxWidth: '800px' }}>
             <div className={styles.modalHeader}>
               <h3 className={styles.modalTitle}>
                 Stock Take Count Sheet: {selectedAudit.auditNumber} ({selectedAudit.status})
@@ -370,6 +377,7 @@ export default function AuditsPage() {
             )}
           </div>
         </div>
+      </Portal>
       )}
     </Layout>
   );

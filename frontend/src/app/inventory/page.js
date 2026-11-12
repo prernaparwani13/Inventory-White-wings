@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Layout from '../../components/Layout';
+import Portal from '../../components/Portal';
 import { api } from '../../utils/api';
 import styles from './inventory.module.css';
 import { SearchIcon, PlusIcon, XIcon } from '../../components/Icons';
@@ -283,8 +284,14 @@ export default function InventoryPage() {
 
       {/* Stock Adjustment Modal */}
       {showModal && (
-        <div className={styles.modalOverlay}>
-          <div className={`${styles.modalContent} glass-panel`}>
+        <Portal>
+          <div
+            className={styles.modalOverlay}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowModal(false);
+            }}
+          >
+            <div className={`${styles.modalContent} glass-panel`}>
             <div className={styles.modalHeader}>
               <h3 className={styles.modalTitle}>New Stock Transaction (In / Out)</h3>
               <button className={styles.closeBtn} onClick={() => setShowModal(false)}>
@@ -396,6 +403,7 @@ export default function InventoryPage() {
             )}
           </div>
         </div>
+      </Portal>
       )}
     </Layout>
   );
